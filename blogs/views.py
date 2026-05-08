@@ -1,10 +1,11 @@
+from django.contrib.auth import get_user_model
 from django.db.models import Count, F, IntegerField, Q, Sum, Value
 from django.db.models.functions import Coalesce
 from rest_framework import generics, permissions, views
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 
-from accounts.models import Follow
+from accounts.models import Follow, Message
 from notifications.models import Notification
 
 from .models import BlogMedia, BlogPost, Comment, ShareLink
@@ -73,6 +74,10 @@ class BlogListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         queryset = BlogPost.objects.select_related('author').prefetch_related('likes', 'comments')
+        if not self.request.user.is_authenticated:
+            queryset = queryset.filter(is_published=True)
+        elif not self.request.user.is_staff:
+            queryset = queryset.filter(Q(is_published=True) | Q(author=self.request.user))
         search = self.request.query_params.get('search')
         sort = self.request.query_params.get('sort', 'latest')
         if search:
@@ -94,8 +99,12 @@ class BlogListCreateView(generics.ListCreateAPIView):
         blog = serializer.save(author=self.request.user)
         Notification.objects.create(
             user=self.request.user,
+            actor=self.request.user,
+            notification_type=Notification.NotificationType.SYSTEM,
             title='Blog published',
             message=f'Your blog "{blog.title}" is now live.',
+            target_blog=blog,
+            payload={'blog_id': blog.id},
         )
 
 
@@ -133,6 +142,38 @@ class ShareLinkCreateView(views.APIView):
         return Response(serializer.data)
 
 
+class BlogSendToUsersView(views.APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, slug):
+        blog = generics.get_object_or_404(BlogPost, slug=slug)
+        receiver_ids = request.data.get('receiver_ids') or []
+        if not isinstance(receiver_ids, list) or not receiver_ids:
+            return Response({'detail': 'receiver_ids must be a non-empty list.'}, status=400)
+        users = get_user_model().objects.filter(id__in=receiver_ids).exclude(id=request.user.id)
+        created = 0
+        for receiver in users:
+            msg = Message.objects.create(
+                sender=request.user,
+                receiver=receiver,
+                message_type=Message.MessageType.BLOG_SHARE,
+                content=request.data.get('content', ''),
+                shared_blog=blog,
+            )
+            Notification.objects.create(
+                user=receiver,
+                actor=request.user,
+                notification_type=Notification.NotificationType.SHARE,
+                title='Blog shared with you',
+                message=f'{request.user.username} shared "{blog.title}" with you.',
+                target_blog=blog,
+                target_message=msg,
+                payload={'blog_slug': blog.slug},
+            )
+            created += 1
+        return Response({'sent': created})
+
+
 class SharedBlogView(generics.RetrieveAPIView):
     serializer_class = BlogPostSerializer
     permission_classes = [permissions.AllowAny]
@@ -152,7 +193,17 @@ class CommentListCreateView(generics.ListCreateAPIView):
 
     def perform_create(self, serializer):
         blog = generics.get_object_or_404(BlogPost, slug=self.kwargs['slug'])
-        serializer.save(blog=blog, user=self.request.user)
+        comment = serializer.save(blog=blog, user=self.request.user)
+        if blog.author_id != self.request.user.id:
+            Notification.objects.create(
+                user=blog.author,
+                actor=self.request.user,
+                notification_type=Notification.NotificationType.COMMENT,
+                title='New comment',
+                message=f'{self.request.user.username} commented on your blog.',
+                target_blog=blog,
+                payload={'comment_id': comment.id},
+            )
 
 
 class LikeToggleView(views.APIView):
@@ -164,6 +215,16 @@ class LikeToggleView(views.APIView):
             blog.likes.remove(request.user)
             return Response({'liked': False})
         blog.likes.add(request.user)
+        if blog.author_id != request.user.id:
+            Notification.objects.create(
+                user=blog.author,
+                actor=request.user,
+                notification_type=Notification.NotificationType.LIKE,
+                title='New like',
+                message=f'{request.user.username} liked your blog.',
+                target_blog=blog,
+                payload={'blog_slug': blog.slug},
+            )
         return Response({'liked': True})
 
 

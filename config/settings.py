@@ -62,6 +62,7 @@ INSTALLED_APPS = [
     'accounts',
     'blogs',
     'notifications',
+    'ai',
 ]
 
 MIDDLEWARE = [

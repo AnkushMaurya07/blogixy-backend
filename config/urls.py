@@ -24,6 +24,7 @@ urlpatterns = [
     path('api/auth/', include('accounts.urls')),
     path('api/blogs/', include('blogs.urls')),
     path('api/notifications/', include('notifications.urls')),
+    path('api/ai/', include('ai.urls')),
 ]
 
 if settings.DEBUG:
