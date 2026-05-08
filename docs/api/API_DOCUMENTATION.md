@@ -8,6 +8,7 @@ Detailed endpoint contracts will be expanded here later.
 - Accounts: `accounts.md`
 - Blogs: `blogs.md`
 - Notifications: `notifications.md`
+- AI: `ai.md`
 - System/Config: `system.md`
 
 ## Notes
