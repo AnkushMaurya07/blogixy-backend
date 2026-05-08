@@ -3,6 +3,7 @@ from django.urls import path
 from .views import (
     BlogAnalyticsView,
     BlogDetailView,
+    BlogHomeFeedView,
     BlogListCreateView,
     BlogMediaUploadView,
     CommentListCreateView,
@@ -12,6 +13,7 @@ from .views import (
 )
 
 urlpatterns = [
+    path('feed/', BlogHomeFeedView.as_view(), name='blog-home-feed'),
     path('', BlogListCreateView.as_view(), name='blog-list-create'),
     path('analytics/', BlogAnalyticsView.as_view(), name='blog-analytics'),
     path('<slug:slug>/', BlogDetailView.as_view(), name='blog-detail'),

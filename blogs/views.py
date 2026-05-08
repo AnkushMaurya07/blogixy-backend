@@ -4,6 +4,7 @@ from rest_framework import generics, permissions, views
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 
+from accounts.models import Follow
 from notifications.models import Notification
 
 from .models import BlogMedia, BlogPost, Comment, ShareLink
@@ -15,6 +16,55 @@ class IsAuthorOrReadOnly(permissions.BasePermission):
         if request.method in permissions.SAFE_METHODS:
             return True
         return obj.author_id == request.user.id
+
+
+class BlogHomeFeedView(views.APIView):
+    """
+    Home feed: posts from people you follow vs. published posts from everyone else you don't follow.
+
+    Anonymous users receive only discovery (full public feed).
+    """
+
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        base_qs = (
+            BlogPost.objects.filter(is_published=True)
+            .select_related('author')
+            .prefetch_related('likes', 'comments', 'media_items')
+        )
+
+        ctx = {'request': request}
+
+        if not request.user.is_authenticated:
+            discovery = base_qs.order_by('-created_at')[:48]
+            return Response(
+                {
+                    'following_feed': [],
+                    'discovery_feed': BlogPostSerializer(discovery, many=True, context=ctx).data,
+                }
+            )
+
+        following_ids = set(
+            Follow.objects.filter(follower=request.user).values_list('following_id', flat=True)
+        )
+        following_feed = (
+            base_qs.filter(author_id__in=following_ids).order_by('-created_at')[:48]
+            if following_ids
+            else BlogPost.objects.none()
+        )
+        discovery_feed = (
+            base_qs.exclude(author_id__in=following_ids)
+            .exclude(author=request.user)
+            .order_by('-created_at')[:48]
+        )
+
+        return Response(
+            {
+                'following_feed': BlogPostSerializer(following_feed, many=True, context=ctx).data,
+                'discovery_feed': BlogPostSerializer(discovery_feed, many=True, context=ctx).data,
+            }
+        )
 
 
 class BlogListCreateView(generics.ListCreateAPIView):
