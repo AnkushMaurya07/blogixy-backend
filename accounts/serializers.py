@@ -12,6 +12,12 @@ class UserSerializer(serializers.ModelSerializer):
         fields = ['id', 'username', 'email', 'role', 'profile_title', 'bio', 'avatar']
         read_only_fields = ['id']
 
+    def validate(self, attrs):
+        f = attrs.get('avatar')
+        if f is not None and hasattr(f, 'size') and f.size == 0:
+            attrs.pop('avatar', None)
+        return attrs
+
 
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=8)
@@ -85,7 +91,11 @@ class MessageSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, attrs):
-        message_type = attrs.get('message_type', Message.MessageType.TEXT)
+        message_type = attrs.get('message_type')
+        if message_type is None and self.instance:
+            message_type = self.instance.message_type
+        if message_type is None:
+            message_type = Message.MessageType.TEXT
         shared_blog = attrs.get('shared_blog')
         content = attrs.get('content', '')
         if message_type == Message.MessageType.BLOG_SHARE and not shared_blog:

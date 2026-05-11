@@ -2,6 +2,7 @@ from django.contrib.auth import get_user_model
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework import generics, permissions, status
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -25,17 +26,57 @@ class RegisterView(generics.CreateAPIView):
     permission_classes = [permissions.AllowAny]
 
 
-class ProfileView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+class UsernameAvailabilityView(APIView):
+    """Return whether `username` is free. Authenticated callers exclude their own account."""
+
+    permission_classes = [permissions.AllowAny]
 
     def get(self, request):
+        username = (request.query_params.get('username') or '').strip()
+        if not username:
+            return Response(
+                {'available': False, 'detail': 'Username is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        queryset = User.objects.filter(username=username)
+        user = getattr(request, 'user', None)
+        if getattr(user, 'is_authenticated', False):
+            queryset = queryset.exclude(pk=user.pk)
+        return Response({'available': not queryset.exists()})
+
+
+class ProfileView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get(self, request):
+        print(f'[ProfileView.get] user_id={request.user.pk} username={request.user.username!r}', flush=True)
         return Response(UserSerializer(request.user).data)
 
     def patch(self, request):
-        serializer = UserSerializer(request.user, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
+        # Multipart: drop zero-byte avatar parts (curl mistakes / aborted uploads) so text fields still save.
+        data_keys = list(request.data.keys()) if hasattr(request.data, 'keys') else []
+        ctype = getattr(request, 'content_type', None) or request.META.get('CONTENT_TYPE', '')
+        print(
+            f'[ProfileView.patch] user_id={request.user.pk} content_type={ctype!r} data_keys={data_keys}',
+            flush=True,
+        )
+        data = request.data.copy() if hasattr(request.data, 'copy') else request.data
+        av = data.get('avatar') if hasattr(data, 'get') else None
+        if av is not None and getattr(av, 'size', None) == 0 and hasattr(data, 'pop'):
+            print('[ProfileView.patch] dropping zero-byte avatar part', flush=True)
+            data.pop('avatar', None)
+        serializer = UserSerializer(request.user, data=data, partial=True)
+        if not serializer.is_valid():
+            print(f'[ProfileView.patch] validation_errors={dict(serializer.errors)}', flush=True)
+            serializer.is_valid(raise_exception=True)
         serializer.save()
+        print(f'[ProfileView.patch] saved ok user_id={request.user.pk}', flush=True)
         return Response(serializer.data)
+
+    def post(self, request):
+        """Same semantics as PATCH (partial update). Used from the SPA when CORS preflight omits PATCH."""
+        return self.patch(request)
 
 
 class UserListView(generics.ListAPIView):
@@ -187,13 +228,13 @@ class MessageConversationListView(APIView):
             )
             if not last:
                 continue
+            text = last.content or ''
+            preview = (text[:120] + '…') if len(text) > 120 else text
             results.append(
                 {
                     'user_id': other.id,
                     'username': other.username,
-                    'last_message_preview': (last.content[:120] + '…')
-                    if len(last.content) > 120
-                    else last.content,
+                    'last_message_preview': preview,
                     'last_at': last.created_at,
                     'last_sender_id': last.sender_id,
                     'unread_count': Message.objects.filter(sender_id=pid, receiver=user, is_read=False).count(),

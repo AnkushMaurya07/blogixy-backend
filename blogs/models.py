@@ -56,6 +56,21 @@ class ShareLink(models.Model):
         return f'ShareLink({self.blog_id})'
 
 
+class Favorite(models.Model):
+    """User saved a post for later — list ordered by `created_at` (when saved)."""
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, related_name='blog_favorites', on_delete=models.CASCADE)
+    blog = models.ForeignKey(BlogPost, related_name='favorited_by', on_delete=models.CASCADE)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['user', 'blog'], name='unique_user_blog_favorite')]
+        ordering = ['-created_at']
+
+    def __str__(self) -> str:
+        return f'{self.user_id} → {self.blog_id}'
+
+
 class Comment(models.Model):
     blog = models.ForeignKey(BlogPost, related_name='comments', on_delete=models.CASCADE)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, related_name='comments', on_delete=models.CASCADE)

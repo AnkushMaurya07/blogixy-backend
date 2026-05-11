@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import BlogMedia, BlogPost, Comment, ShareLink
+from .models import BlogMedia, BlogPost, Comment, Favorite, ShareLink
 
 
 class BlogMediaSerializer(serializers.ModelSerializer):
@@ -13,6 +13,8 @@ class BlogMediaSerializer(serializers.ModelSerializer):
 class BlogPostSerializer(serializers.ModelSerializer):
     media_items = BlogMediaSerializer(many=True, read_only=True)
     author_name = serializers.CharField(source='author.username', read_only=True)
+    author_avatar = serializers.SerializerMethodField()
+    is_favorited = serializers.SerializerMethodField()
     likes_count = serializers.IntegerField(source='likes.count', read_only=True)
     comments_count = serializers.IntegerField(source='comments.count', read_only=True)
     ranking_score = serializers.SerializerMethodField()
@@ -23,6 +25,8 @@ class BlogPostSerializer(serializers.ModelSerializer):
             'id',
             'author',
             'author_name',
+            'author_avatar',
+            'is_favorited',
             'title',
             'slug',
             'content',
@@ -47,8 +51,36 @@ class BlogPostSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
 
+    def get_author_avatar(self, obj):
+        field = getattr(obj.author, 'avatar', None)
+        if not field:
+            return None
+        request = self.context.get('request')
+        path = field.url
+        if request and path and path.startswith('/'):
+            return request.build_absolute_uri(path)
+        return path
+
+    def get_is_favorited(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+        fav_ids = self.context.get('favorite_blog_ids')
+        if fav_ids is not None:
+            return obj.id in fav_ids
+        return Favorite.objects.filter(user=request.user, blog=obj).exists()
+
     def get_ranking_score(self, obj):
         return (obj.likes.count() * 3) + (obj.comments.count() * 2) + obj.view_count
+
+
+class FavoriteEntrySerializer(serializers.ModelSerializer):
+    blog = BlogPostSerializer(read_only=True)
+    favorited_at = serializers.DateTimeField(source='created_at', read_only=True)
+
+    class Meta:
+        model = Favorite
+        fields = ['favorited_at', 'blog']
 
 
 class ShareLinkSerializer(serializers.ModelSerializer):

@@ -8,6 +8,8 @@ from .views import (
     BlogMediaUploadView,
     BlogSendToUsersView,
     CommentListCreateView,
+    FavoriteListView,
+    FavoriteToggleView,
     LikeToggleView,
     ShareLinkCreateView,
     SharedBlogView,
@@ -15,12 +17,14 @@ from .views import (
 
 urlpatterns = [
     path('feed/', BlogHomeFeedView.as_view(), name='blog-home-feed'),
+    path('favorites/', FavoriteListView.as_view(), name='blog-favorites-list'),
     path('', BlogListCreateView.as_view(), name='blog-list-create'),
     path('analytics/', BlogAnalyticsView.as_view(), name='blog-analytics'),
     path('<slug:slug>/send/', BlogSendToUsersView.as_view(), name='blog-send-to-users'),
     path('<slug:slug>/', BlogDetailView.as_view(), name='blog-detail'),
     path('<slug:slug>/comments/', CommentListCreateView.as_view(), name='blog-comments'),
     path('<slug:slug>/like-toggle/', LikeToggleView.as_view(), name='blog-like-toggle'),
+    path('<slug:slug>/favorite-toggle/', FavoriteToggleView.as_view(), name='blog-favorite-toggle'),
     path('<slug:slug>/share/', ShareLinkCreateView.as_view(), name='blog-share'),
     path('<int:blog_id>/media/', BlogMediaUploadView.as_view(), name='blog-media'),
     path('shared/<str:token>/', SharedBlogView.as_view(), name='shared-blog'),

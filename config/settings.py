@@ -13,6 +13,9 @@ https://docs.djangoproject.com/en/5.0/ref/settings/
 from pathlib import Path
 from datetime import timedelta
 
+from corsheaders.defaults import default_headers
+from corsheaders.defaults import default_methods
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -30,6 +33,9 @@ ALLOWED_HOSTS = ['127.0.0.1', 'localhost']
 
 # CORS configuration for local frontend development.
 CORS_ALLOW_CREDENTIALS = True
+# Explicit lists — some environments have been seen to omit PATCH from preflight Allow-Methods otherwise.
+CORS_ALLOW_METHODS = list(default_methods)
+CORS_ALLOW_HEADERS = list(default_headers)
 CORS_ALLOWED_ORIGINS = [
     'http://127.0.0.1:5173',
     'http://localhost:5173',
@@ -46,6 +52,23 @@ CSRF_TRUSTED_ORIGINS = [
     'http://127.0.0.1:3000',
     'http://localhost:3000',
 ]
+
+# Any localhost / 127.0.0.1 port (Vite may pick a free port) so PATCH profile + JSON preflight succeeds.
+if DEBUG:
+    CORS_ALLOWED_ORIGIN_REGEXES = [
+        r'^http://(127\.0\.0\.1|localhost):\d+$',
+    ]
+    CSRF_TRUSTED_ORIGINS = list(
+        dict.fromkeys(
+            CSRF_TRUSTED_ORIGINS
+            + [
+                'http://127.0.0.1:5175',
+                'http://localhost:5175',
+                'http://127.0.0.1:4173',
+                'http://localhost:4173',
+            ]
+        )
+    )
 
 
 # Application definition
