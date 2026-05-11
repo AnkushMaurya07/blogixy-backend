@@ -8,8 +8,14 @@ from rest_framework.response import Response
 from accounts.models import Follow, Message
 from notifications.models import Notification
 
-from .models import BlogMedia, BlogPost, Comment, ShareLink
-from .serializers import BlogMediaSerializer, BlogPostSerializer, CommentSerializer, ShareLinkSerializer
+from .models import BlogMedia, BlogPost, Comment, Favorite, ShareLink
+from .serializers import (
+    BlogMediaSerializer,
+    BlogPostSerializer,
+    CommentSerializer,
+    FavoriteEntrySerializer,
+    ShareLinkSerializer,
+)
 
 
 class IsAuthorOrReadOnly(permissions.BasePermission):
@@ -21,14 +27,31 @@ class IsAuthorOrReadOnly(permissions.BasePermission):
 
 class BlogHomeFeedView(views.APIView):
     """
-    Home feed: posts from people you follow vs. published posts from everyone else you don't follow.
+    Home feeds (paginated):
 
-    Anonymous users receive only discovery (full public feed).
+    - `section=all` (default): everything public except your own posts (merged “for you” stream).
+    - `section=following`: only authors you follow.
+    - `section=discover`: published posts excluding you and excluding authors you follow.
+
+    Anonymous: all published posts (section ignored).
+
+    Paginated with `page` (default 1) and `page_size` (default 10, max 50).
     """
 
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
+        try:
+            page = int(request.query_params.get('page', 1))
+        except (TypeError, ValueError):
+            page = 1
+        page = max(1, page)
+        try:
+            page_size = int(request.query_params.get('page_size', 10))
+        except (TypeError, ValueError):
+            page_size = 10
+        page_size = min(50, max(1, page_size))
+
         base_qs = (
             BlogPost.objects.filter(is_published=True)
             .select_related('author')
@@ -37,33 +60,52 @@ class BlogHomeFeedView(views.APIView):
 
         ctx = {'request': request}
 
-        if not request.user.is_authenticated:
-            discovery = base_qs.order_by('-created_at')[:48]
-            return Response(
-                {
-                    'following_feed': [],
-                    'discovery_feed': BlogPostSerializer(discovery, many=True, context=ctx).data,
-                }
-            )
+        section = request.query_params.get('section', 'all')
+        if section not in ('all', 'following', 'discover'):
+            section = 'all'
 
-        following_ids = set(
-            Follow.objects.filter(follower=request.user).values_list('following_id', flat=True)
-        )
-        following_feed = (
-            base_qs.filter(author_id__in=following_ids).order_by('-created_at')[:48]
-            if following_ids
-            else BlogPost.objects.none()
-        )
-        discovery_feed = (
-            base_qs.exclude(author_id__in=following_ids)
-            .exclude(author=request.user)
-            .order_by('-created_at')[:48]
-        )
+        if not request.user.is_authenticated:
+            timeline_qs = base_qs.order_by('-created_at')
+        elif section == 'all':
+            timeline_qs = base_qs.exclude(author=request.user).order_by('-created_at')
+        elif section == 'following':
+            following_ids = set(Follow.objects.filter(follower=request.user).values_list('following_id', flat=True))
+            if not following_ids:
+                timeline_qs = BlogPost.objects.none()
+            else:
+                timeline_qs = base_qs.filter(author_id__in=following_ids).order_by('-created_at')
+        else:
+            following_ids = set(Follow.objects.filter(follower=request.user).values_list('following_id', flat=True))
+            timeline_qs = base_qs.exclude(author=request.user)
+            if following_ids:
+                timeline_qs = timeline_qs.exclude(author_id__in=following_ids)
+            timeline_qs = timeline_qs.order_by('-created_at')
+
+        total = timeline_qs.count()
+        offset = (page - 1) * page_size
+        page_objs = list(timeline_qs[offset : offset + page_size])
+
+        if request.user.is_authenticated:
+            blog_ids_on_page = [b.id for b in page_objs]
+            fav_id_set = set(
+                Favorite.objects.filter(user=request.user, blog_id__in=blog_ids_on_page).values_list(
+                    'blog_id', flat=True
+                )
+            )
+            ctx_page = {**ctx, 'favorite_blog_ids': fav_id_set}
+        else:
+            ctx_page = ctx
+
+        results = BlogPostSerializer(page_objs, many=True, context=ctx_page).data
+        has_next = offset + len(page_objs) < total
 
         return Response(
             {
-                'following_feed': BlogPostSerializer(following_feed, many=True, context=ctx).data,
-                'discovery_feed': BlogPostSerializer(discovery_feed, many=True, context=ctx).data,
+                'results': results,
+                'count': total,
+                'page': page,
+                'page_size': page_size,
+                'has_next': has_next,
             }
         )
 
@@ -73,11 +115,29 @@ class BlogListCreateView(generics.ListCreateAPIView):
     serializer_class = BlogPostSerializer
 
     def get_queryset(self):
-        queryset = BlogPost.objects.select_related('author').prefetch_related('likes', 'comments')
-        if not self.request.user.is_authenticated:
-            queryset = queryset.filter(is_published=True)
-        elif not self.request.user.is_staff:
-            queryset = queryset.filter(Q(is_published=True) | Q(author=self.request.user))
+        queryset = BlogPost.objects.select_related('author').prefetch_related(
+            'likes', 'comments', 'media_items'
+        )
+        user = self.request.user
+        author_param = self.request.query_params.get('author')
+
+        if author_param is not None:
+            try:
+                author_id = int(author_param)
+            except (TypeError, ValueError):
+                author_id = None
+            if author_id is not None:
+                queryset = queryset.filter(author_id=author_id)
+                if not user.is_authenticated:
+                    queryset = queryset.filter(is_published=True)
+                elif not user.is_staff and getattr(user, 'id', None) != author_id:
+                    queryset = queryset.filter(is_published=True)
+        else:
+            if not user.is_authenticated:
+                queryset = queryset.filter(is_published=True)
+            elif not user.is_staff:
+                queryset = queryset.filter(Q(is_published=True) | Q(author=user))
+
         search = self.request.query_params.get('search')
         sort = self.request.query_params.get('sort', 'latest')
         if search:
@@ -105,6 +165,53 @@ class BlogListCreateView(generics.ListCreateAPIView):
             message=f'Your blog "{blog.title}" is now live.',
             target_blog=blog,
             payload={'blog_id': blog.id},
+        )
+
+    def list(self, request, *args, **kwargs):
+        """
+        Global blog list (no `author` filter) returns a paginated envelope when using the explore
+        endpoint pattern. Per-author profile lists (`?author=`) stay a plain JSON array for compatibility.
+        """
+        if request.query_params.get('author') is not None:
+            return super().list(request, *args, **kwargs)
+
+        queryset = self.filter_queryset(self.get_queryset())
+
+        try:
+            page = max(1, int(request.query_params.get('page', 1)))
+        except (TypeError, ValueError):
+            page = 1
+        try:
+            page_size = min(50, max(1, int(request.query_params.get('page_size', 10))))
+        except (TypeError, ValueError):
+            page_size = 10
+
+        total = queryset.count()
+        offset = (page - 1) * page_size
+        page_objs = list(queryset[offset : offset + page_size])
+
+        ctx = self.get_serializer_context()
+        user = request.user
+        if user.is_authenticated:
+            ids = [b.id for b in page_objs]
+            ctx = {
+                **ctx,
+                'favorite_blog_ids': set(
+                    Favorite.objects.filter(user=user, blog_id__in=ids).values_list('blog_id', flat=True)
+                ),
+            }
+
+        serializer = self.get_serializer(page_objs, many=True, context=ctx)
+        has_next = offset + len(page_objs) < total
+
+        return Response(
+            {
+                'results': serializer.data,
+                'count': total,
+                'page': page,
+                'page_size': page_size,
+                'has_next': has_next,
+            }
         )
 
 
@@ -226,6 +333,41 @@ class LikeToggleView(views.APIView):
                 payload={'blog_slug': blog.slug},
             )
         return Response({'liked': True})
+
+
+class FavoriteToggleView(views.APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, slug):
+        blog = generics.get_object_or_404(BlogPost, slug=slug)
+        existing = Favorite.objects.filter(user=request.user, blog=blog).first()
+        if existing:
+            existing.delete()
+            return Response({'favorited': False})
+        Favorite.objects.create(user=request.user, blog=blog)
+        return Response({'favorited': True})
+
+
+class FavoriteListView(generics.ListAPIView):
+    """Current user's saved posts, newest save first (`created_at` on Favorite)."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = FavoriteEntrySerializer
+
+    def get_queryset(self):
+        return (
+            Favorite.objects.filter(user=self.request.user)
+            .select_related('blog', 'blog__author')
+            .prefetch_related('blog__likes', 'blog__comments', 'blog__media_items')
+            .order_by('-created_at')
+        )
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx['favorite_blog_ids'] = set(
+            Favorite.objects.filter(user=self.request.user).values_list('blog_id', flat=True)
+        )
+        return ctx
 
 
 class BlogAnalyticsView(views.APIView):

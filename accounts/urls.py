@@ -14,6 +14,7 @@ from .views import (
     ProfileView,
     RegisterView,
     SuggestedUsersView,
+    UsernameAvailabilityView,
     UserDetailView,
     UserListView,
 )
@@ -22,6 +23,7 @@ urlpatterns = [
     path('register/', RegisterView.as_view(), name='register'),
     path('login/', TokenObtainPairView.as_view(), name='login'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token-refresh'),
+    path('username-check/', UsernameAvailabilityView.as_view(), name='username-check'),
     path('profile/', ProfileView.as_view(), name='profile'),
     path('users/', UserListView.as_view(), name='user-list'),
     path('users/<int:pk>/', UserDetailView.as_view(), name='user-detail'),

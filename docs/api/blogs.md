@@ -4,8 +4,8 @@
 Blog CRUD, home feed, media uploads, share links, direct sharing to users via messages, likes, comments, search/explore, analytics.
 
 ## Endpoints
-- `GET /api/blogs/feed/` — Home feed: `following_feed` + `discovery_feed` when authenticated; anonymous users get discovery only.
-- `GET/POST /api/blogs/` — List (search `?search=`, sort `?sort=latest|ranking`) and create. Anonymous list is published-only; authenticated users see published + their own drafts.
+- `GET /api/blogs/feed/?page=1&page_size=10&section=all|following|discover` — Home feeds (paginated). **`all`** (default) = all published posts except yours; **`following`** = only people you follow; **`discover`** = excluding you and people you follow. Anonymous: full public stream (`section` ignored). Response: `{ results, count, page, page_size, has_next }`.
+- `GET/POST /api/blogs/` — **List without `author`:** paginated envelope `results`, `count`, `page`, `page_size`, `has_next` with `?page=` & `?page_size=` (default 10); supports `search`, `sort=latest|ranking`. **`?author=<id>`** still returns a **plain JSON array** of posts (profile). Create: authenticated.
 - `GET/PATCH/DELETE /api/blogs/{slug}/` — Detail/update/delete. `GET` increments `view_count`.
 - `POST /api/blogs/{slug}/send/` — Authenticated. Body: `{ "receiver_ids": [<int>, ...], "content": "<optional note>" }`. Creates `blog_share` messages + notifications for each receiver.
 - `POST /api/blogs/{blog_id}/media/` — Multipart media upload (author only).

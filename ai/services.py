@@ -1,3 +1,12 @@
+"""
+Blog draft "AI" for Blogixy demos.
+
+This module does **not** call OpenAI, Anthropic, or any remote LLM. It builds a short
+structured post from your prompt using fixed paragraphs so the product works offline
+and costs nothing. For production, replace `generate_blog_draft` with your provider
+client and keep the same return shape (title, content, provider, model, latency_ms).
+"""
+
 import time
 
 

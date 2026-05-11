@@ -7,7 +7,7 @@ Authentication, profiles, user discovery, follows / follow-requests, and messagi
 - `POST /api/auth/register/`
 - `POST /api/auth/login/` — JWT pair.
 - `POST /api/auth/token/refresh/`
-- `GET/PATCH /api/auth/profile/` — Current user profile.
+- `GET/PATCH/POST /api/auth/profile/` — Current user profile (`POST` mirrors `PATCH` for clients where CORS preflight omits `PATCH`).
 - `GET /api/auth/users/` — List users (`?search=` optional). Exclude self.
 - `GET /api/auth/users/<id>/` — User profile by id (authenticated).
 - `GET /api/auth/users/suggestions/` — Suggested users not yet followed (`?limit=` capped).
