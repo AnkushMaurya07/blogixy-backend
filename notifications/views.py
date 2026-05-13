@@ -35,3 +35,19 @@ class NotificationMarkAllReadView(APIView):
     def post(self, request):
         count = Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
         return Response({'updated': count})
+
+
+class NotificationMarkReadView(APIView):
+    """Mark a single notification read (POST avoids PATCH/preflight edge cases in some clients)."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        notification = Notification.objects.filter(user=request.user, id=pk).first()
+        if not notification:
+            return Response(status=404)
+        if not notification.is_read:
+            notification.is_read = True
+            notification.save(update_fields=['is_read'])
+        serializer = NotificationSerializer(notification, context={'request': request})
+        return Response(serializer.data)

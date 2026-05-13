@@ -115,10 +115,21 @@ class BlogListCreateView(generics.ListCreateAPIView):
     serializer_class = BlogPostSerializer
 
     def get_queryset(self):
+        user = self.request.user
+        drafts_only = (self.request.query_params.get('drafts_only') or '').lower() == 'true'
+        if drafts_only:
+            if not user.is_authenticated:
+                return BlogPost.objects.none()
+            return (
+                BlogPost.objects.filter(author=user, is_published=False)
+                .select_related('author')
+                .prefetch_related('likes', 'comments', 'media_items')
+                .order_by('-updated_at')
+            )
+
         queryset = BlogPost.objects.select_related('author').prefetch_related(
             'likes', 'comments', 'media_items'
         )
-        user = self.request.user
         author_param = self.request.query_params.get('author')
 
         if author_param is not None:
@@ -157,15 +168,26 @@ class BlogListCreateView(generics.ListCreateAPIView):
 
     def perform_create(self, serializer):
         blog = serializer.save(author=self.request.user)
-        Notification.objects.create(
-            user=self.request.user,
-            actor=self.request.user,
-            notification_type=Notification.NotificationType.SYSTEM,
-            title='Blog published',
-            message=f'Your blog "{blog.title}" is now live.',
-            target_blog=blog,
-            payload={'blog_id': blog.id},
-        )
+        if blog.is_published:
+            Notification.objects.create(
+                user=self.request.user,
+                actor=self.request.user,
+                notification_type=Notification.NotificationType.SYSTEM,
+                title='Blog published',
+                message=f'Your blog "{blog.title}" is now live.',
+                target_blog=blog,
+                payload={'blog_id': blog.id},
+            )
+        else:
+            Notification.objects.create(
+                user=self.request.user,
+                actor=self.request.user,
+                notification_type=Notification.NotificationType.SYSTEM,
+                title='Draft saved',
+                message=f'Your draft "{blog.title}" is saved. Publish it when you are ready.',
+                target_blog=blog,
+                payload={'blog_id': blog.id},
+            )
 
     def list(self, request, *args, **kwargs):
         """
@@ -223,8 +245,9 @@ class BlogDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_object(self):
         blog = super().get_object()
-        blog.view_count += 1
-        blog.save(update_fields=['view_count'])
+        if self.request.method == 'GET':
+            blog.view_count += 1
+            blog.save(update_fields=['view_count'])
         return blog
 
 
@@ -374,19 +397,56 @@ class BlogAnalyticsView(views.APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        total_posts = BlogPost.objects.filter(author=request.user).count()
-        total_views = (
-            BlogPost.objects.filter(author=request.user).aggregate(total=Coalesce(Sum('view_count'), 0)).get('total')
-        )
+        user = request.user
+        posts_qs = BlogPost.objects.filter(author=user)
+
+        total_posts = posts_qs.count()
+        total_views = posts_qs.aggregate(total=Coalesce(Sum('view_count'), 0)).get('total')
         total_likes = (
-            BlogPost.objects.filter(author=request.user).annotate(like_count=Count('likes'))
+            posts_qs.annotate(like_count=Count('likes'))
             .aggregate(total=Coalesce(Sum('like_count'), 0))
             .get('total')
         )
+        total_comments = Comment.objects.filter(blog__author=user).count()
+
+        top = posts_qs.order_by('-view_count', '-created_at').first()
+        most_viewed_post = None
+        if top:
+            most_viewed_post = {'slug': top.slug, 'title': top.title, 'view_count': top.view_count}
+
+        recent_rows = (
+            posts_qs.annotate(like_count=Count('likes', distinct=True), comment_count=Count('comments', distinct=True))
+            .order_by('-created_at')[:10]
+            .values(
+                'slug',
+                'title',
+                'view_count',
+                'like_count',
+                'comment_count',
+                'created_at',
+                'updated_at',
+                'is_published',
+            )
+        )
+        recent_activity = []
+        for row in recent_rows:
+            item = dict(row)
+            ca = item.get('created_at')
+            ua = item.get('updated_at')
+            item['created_at'] = ca.isoformat() if ca else None
+            item['updated_at'] = ua.isoformat() if ua else None
+            recent_activity.append(item)
+
+        avg_views_per_post = round(total_views / total_posts, 1) if total_posts else 0.0
+
         return Response(
             {
                 'total_posts': total_posts,
                 'total_views': total_views,
                 'total_likes': total_likes,
+                'total_comments': total_comments,
+                'avg_views_per_post': avg_views_per_post,
+                'most_viewed_post': most_viewed_post,
+                'recent_activity': recent_activity,
             }
         )

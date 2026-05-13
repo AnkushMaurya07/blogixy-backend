@@ -6,6 +6,7 @@ User notification inbox with typed events, actor and target metadata, read state
 ## Endpoints
 - `GET /api/notifications/` — List for current user. Query: `?is_read=true|false`, `?type=<notification_type>`.
 - `POST /api/notifications/mark-all-read/` — Marks all unread notifications read for current user.
+- `POST /api/notifications/<id>/mark-read/` — Mark one notification read (preferred from the web app).
 - `PATCH /api/notifications/<id>/` — Partial update (e.g. `{ "is_read": true }`).
 
 ## Payload fields (read-oriented)
