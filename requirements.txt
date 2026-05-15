@@ -4,3 +4,4 @@ djangorestframework-simplejwt
 django-cors-headers
 pillow
 python-dotenv
+gunicorn>=20.0.4
