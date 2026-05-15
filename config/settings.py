@@ -10,48 +10,88 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.0/ref/settings/
 """
 
-from pathlib import Path
+import os
 from datetime import timedelta
+from pathlib import Path
 
 from corsheaders.defaults import default_headers
 from corsheaders.defaults import default_methods
+from django.core.exceptions import ImproperlyConfigured
+from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+load_dotenv(BASE_DIR / '.env')
+
+
+def env_bool(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def env_list(name: str, default: list[str] | None = None) -> list[str]:
+    raw = os.environ.get(name, '')
+    if not raw.strip():
+        return list(default or [])
+    return [item.strip() for item in raw.split(',') if item.strip()]
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-!ank=0vlaa-ol)9z^^)b)eh+2rj8ps(ootr*8h0-lc_u+%n133'
+_DEV_SECRET_KEY = 'django-insecure-dev-only-change-in-production'
+SECRET_KEY = os.environ.get('SECRET_KEY', _DEV_SECRET_KEY)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = env_bool('DEBUG', default=True)
 
-ALLOWED_HOSTS = ['127.0.0.1', 'localhost']
+ALLOWED_HOSTS = env_list('ALLOWED_HOSTS', default=['127.0.0.1', 'localhost'])
 
-# CORS configuration for local frontend development.
+# CORS configuration
 CORS_ALLOW_CREDENTIALS = True
 # Explicit lists — some environments have been seen to omit PATCH from preflight Allow-Methods otherwise.
 CORS_ALLOW_METHODS = list(default_methods)
 CORS_ALLOW_HEADERS = list(default_headers)
-CORS_ALLOWED_ORIGINS = [
-    'http://127.0.0.1:5173',
-    'http://localhost:5173',
-    'http://127.0.0.1:5174',
-    'http://localhost:5174',
-    'http://127.0.0.1:3000',
-    'http://localhost:3000',
-]
-CSRF_TRUSTED_ORIGINS = [
-    'http://127.0.0.1:5173',
-    'http://localhost:5173',
-    'http://127.0.0.1:5174',
-    'http://localhost:5174',
-    'http://127.0.0.1:3000',
-    'http://localhost:3000',
-]
+CORS_ALLOWED_ORIGINS = env_list(
+    'CORS_ALLOWED_ORIGINS',
+    default=[
+        'http://127.0.0.1:5173',
+        'http://localhost:5173',
+        'http://127.0.0.1:5174',
+        'http://localhost:5174',
+        'http://127.0.0.1:3000',
+        'http://localhost:3000',
+    ],
+)
+CSRF_TRUSTED_ORIGINS = env_list(
+    'CSRF_TRUSTED_ORIGINS',
+    default=[
+        'http://127.0.0.1:5173',
+        'http://localhost:5173',
+        'http://127.0.0.1:5174',
+        'http://localhost:5174',
+        'http://127.0.0.1:3000',
+        'http://localhost:3000',
+    ],
+)
+
+if not DEBUG:
+    if SECRET_KEY in {_DEV_SECRET_KEY, 'local-dev-secret-change-before-production'}:
+        raise ImproperlyConfigured(
+            'Set a strong SECRET_KEY in production (see backend/.env.production).'
+        )
+    if not ALLOWED_HOSTS or ALLOWED_HOSTS == ['127.0.0.1', 'localhost']:
+        raise ImproperlyConfigured(
+            'Set ALLOWED_HOSTS to your API domain in production (see backend/.env.production).'
+        )
+    if not CORS_ALLOWED_ORIGINS:
+        raise ImproperlyConfigured(
+            'Set CORS_ALLOWED_ORIGINS to your frontend URL in production.'
+        )
 
 # Any localhost / 127.0.0.1 port (Vite may pick a free port) so PATCH profile + JSON preflight succeeds.
 if DEBUG:

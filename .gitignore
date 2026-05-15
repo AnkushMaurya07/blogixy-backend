@@ -4,7 +4,10 @@ __pycache__/
 *.sqlite3
 db.sqlite3
 .env
-.env.*
+.env.local
+!.env.example
+!.env.local
+!.env.production
 media/
 staticfiles/
 .pytest_cache/
