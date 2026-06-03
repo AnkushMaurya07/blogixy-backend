@@ -1,3 +1,6 @@
+from urllib.parse import urlparse
+
+from django.conf import settings
 from rest_framework import serializers
 
 from .models import BlogMedia, BlogPost, Comment, Favorite, ShareLink
@@ -119,10 +122,20 @@ class ShareLinkSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'token', 'public_url', 'created_at']
 
     def get_public_url(self, obj):
+        slug = obj.blog.slug
+        frontend = getattr(settings, 'FRONTEND_URL', '').strip().rstrip('/')
+        if frontend:
+            return f'{frontend}/blogs/{slug}'
+
         request = self.context.get('request')
-        if not request:
-            return obj.token
-        return request.build_absolute_uri(f'/api/blogs/shared/{obj.token}/')
+        if request:
+            origin = request.headers.get('Origin') or request.headers.get('Referer', '')
+            if origin:
+                parsed = urlparse(origin)
+                if parsed.scheme and parsed.netloc:
+                    return f'{parsed.scheme}://{parsed.netloc}/blogs/{slug}'
+
+        return f'/blogs/{slug}'
 
 
 class CommentSerializer(serializers.ModelSerializer):

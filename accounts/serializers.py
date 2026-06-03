@@ -7,10 +7,18 @@ User = get_user_model()
 
 
 class UserSerializer(serializers.ModelSerializer):
+    is_following = serializers.SerializerMethodField()
+
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'role', 'profile_title', 'bio', 'avatar']
-        read_only_fields = ['id']
+        fields = ['id', 'username', 'email', 'role', 'profile_title', 'bio', 'avatar', 'is_following']
+        read_only_fields = ['id', 'is_following']
+
+    def get_is_following(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated or request.user.id == obj.id:
+            return False
+        return Follow.objects.filter(follower=request.user, following=obj).exists()
 
     def validate(self, attrs):
         f = attrs.get('avatar')

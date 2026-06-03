@@ -29,7 +29,7 @@ class BlogHomeFeedView(views.APIView):
     """
     Home feeds (paginated):
 
-    - `section=all` (default): everything public except your own posts (merged “for you” stream).
+    - `section=all` (default): all published posts, including your own (merged home stream).
     - `section=following`: only authors you follow.
     - `section=discover`: published posts excluding you and excluding authors you follow.
 
@@ -67,7 +67,7 @@ class BlogHomeFeedView(views.APIView):
         if not request.user.is_authenticated:
             timeline_qs = base_qs.order_by('-created_at')
         elif section == 'all':
-            timeline_qs = base_qs.exclude(author=request.user).order_by('-created_at')
+            timeline_qs = base_qs.order_by('-created_at')
         elif section == 'following':
             following_ids = set(Follow.objects.filter(follower=request.user).values_list('following_id', flat=True))
             if not following_ids:
@@ -266,7 +266,7 @@ class ShareLinkCreateView(views.APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, slug):
-        blog = generics.get_object_or_404(BlogPost, slug=slug, author=request.user)
+        blog = generics.get_object_or_404(BlogPost, slug=slug, is_published=True)
         share_link = ShareLink.objects.create(blog=blog, created_by=request.user)
         serializer = ShareLinkSerializer(share_link, context={'request': request})
         return Response(serializer.data)
