@@ -266,7 +266,7 @@ class ShareLinkCreateView(views.APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, slug):
-        blog = generics.get_object_or_404(BlogPost, slug=slug, author=request.user)
+        blog = generics.get_object_or_404(BlogPost, slug=slug, author=request.user, is_published=True)
         share_link = ShareLink.objects.create(blog=blog, created_by=request.user)
         serializer = ShareLinkSerializer(share_link, context={'request': request})
         return Response(serializer.data)
@@ -309,7 +309,11 @@ class SharedBlogView(generics.RetrieveAPIView):
     permission_classes = [permissions.AllowAny]
 
     def get_object(self):
-        share = generics.get_object_or_404(ShareLink.objects.select_related('blog'), token=self.kwargs['token'])
+        share = generics.get_object_or_404(
+            ShareLink.objects.select_related('blog'),
+            token=self.kwargs['token'],
+            blog__is_published=True,
+        )
         return share.blog
 
 
