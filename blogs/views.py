@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from django.db.models import Count, F, IntegerField, Q, Sum, Value
 from django.db.models.functions import Coalesce
 from rest_framework import generics, permissions, views
@@ -9,6 +10,7 @@ from accounts.models import Follow, Message
 from notifications.models import Notification
 
 from .models import BlogMedia, BlogPost, Comment, Favorite, ShareLink
+from .pagination import BlogPageNumberPagination
 from .serializers import (
     BlogMediaSerializer,
     BlogPostSerializer,
@@ -39,19 +41,9 @@ class BlogHomeFeedView(views.APIView):
     """
 
     permission_classes = [permissions.AllowAny]
+    pagination_class = BlogPageNumberPagination
 
     def get(self, request):
-        try:
-            page = int(request.query_params.get('page', 1))
-        except (TypeError, ValueError):
-            page = 1
-        page = max(1, page)
-        try:
-            page_size = int(request.query_params.get('page_size', 10))
-        except (TypeError, ValueError):
-            page_size = 10
-        page_size = min(50, max(1, page_size))
-
         base_qs = (
             BlogPost.objects.filter(is_published=True)
             .select_related('author')
@@ -81,12 +73,13 @@ class BlogHomeFeedView(views.APIView):
                 timeline_qs = timeline_qs.exclude(author_id__in=following_ids)
             timeline_qs = timeline_qs.order_by('-created_at')
 
-        total = timeline_qs.count()
-        offset = (page - 1) * page_size
-        page_objs = list(timeline_qs[offset : offset + page_size])
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(timeline_qs, request, view=self)
+        if page is None:
+            page = list(timeline_qs)
 
         if request.user.is_authenticated:
-            blog_ids_on_page = [b.id for b in page_objs]
+            blog_ids_on_page = [b.id for b in page]
             fav_id_set = set(
                 Favorite.objects.filter(user=request.user, blog_id__in=blog_ids_on_page).values_list(
                     'blog_id', flat=True
@@ -96,23 +89,16 @@ class BlogHomeFeedView(views.APIView):
         else:
             ctx_page = ctx
 
-        results = BlogPostSerializer(page_objs, many=True, context=ctx_page).data
-        has_next = offset + len(page_objs) < total
-
-        return Response(
-            {
-                'results': results,
-                'count': total,
-                'page': page,
-                'page_size': page_size,
-                'has_next': has_next,
-            }
-        )
+        results = BlogPostSerializer(page, many=True, context=ctx_page).data
+        if page is not None and hasattr(paginator, 'get_paginated_response'):
+            return paginator.get_paginated_response(results)
+        return Response({'results': results})
 
 
 class BlogListCreateView(generics.ListCreateAPIView):
     queryset = BlogPost.objects.select_related('author').all()
     serializer_class = BlogPostSerializer
+    pagination_class = BlogPageNumberPagination
 
     def get_queryset(self):
         user = self.request.user
@@ -198,24 +184,13 @@ class BlogListCreateView(generics.ListCreateAPIView):
             return super().list(request, *args, **kwargs)
 
         queryset = self.filter_queryset(self.get_queryset())
-
-        try:
-            page = max(1, int(request.query_params.get('page', 1)))
-        except (TypeError, ValueError):
-            page = 1
-        try:
-            page_size = min(50, max(1, int(request.query_params.get('page_size', 10))))
-        except (TypeError, ValueError):
-            page_size = 10
-
-        total = queryset.count()
-        offset = (page - 1) * page_size
-        page_objs = list(queryset[offset : offset + page_size])
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(queryset, request, view=self)
 
         ctx = self.get_serializer_context()
         user = request.user
-        if user.is_authenticated:
-            ids = [b.id for b in page_objs]
+        if user.is_authenticated and page is not None:
+            ids = [b.id for b in page]
             ctx = {
                 **ctx,
                 'favorite_blog_ids': set(
@@ -223,18 +198,10 @@ class BlogListCreateView(generics.ListCreateAPIView):
                 ),
             }
 
-        serializer = self.get_serializer(page_objs, many=True, context=ctx)
-        has_next = offset + len(page_objs) < total
-
-        return Response(
-            {
-                'results': serializer.data,
-                'count': total,
-                'page': page,
-                'page_size': page_size,
-                'has_next': has_next,
-            }
-        )
+        serializer = self.get_serializer(page, many=True, context=ctx)
+        if page is not None:
+            return paginator.get_paginated_response(serializer.data)
+        return Response(serializer.data)
 
 
 class BlogDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -281,26 +248,28 @@ class BlogSendToUsersView(views.APIView):
         if not isinstance(receiver_ids, list) or not receiver_ids:
             return Response({'detail': 'receiver_ids must be a non-empty list.'}, status=400)
         users = get_user_model().objects.filter(id__in=receiver_ids).exclude(id=request.user.id)
+
         created = 0
-        for receiver in users:
-            msg = Message.objects.create(
-                sender=request.user,
-                receiver=receiver,
-                message_type=Message.MessageType.BLOG_SHARE,
-                content=request.data.get('content', ''),
-                shared_blog=blog,
-            )
-            Notification.objects.create(
-                user=receiver,
-                actor=request.user,
-                notification_type=Notification.NotificationType.SHARE,
-                title='Blog shared with you',
-                message=f'{request.user.username} shared "{blog.title}" with you.',
-                target_blog=blog,
-                target_message=msg,
-                payload={'blog_slug': blog.slug},
-            )
-            created += 1
+        with transaction.atomic():
+            for receiver in users:
+                msg = Message.objects.create(
+                    sender=request.user,
+                    receiver=receiver,
+                    message_type=Message.MessageType.BLOG_SHARE,
+                    content=request.data.get('content', ''),
+                    shared_blog=blog,
+                )
+                Notification.objects.create(
+                    user=receiver,
+                    actor=request.user,
+                    notification_type=Notification.NotificationType.SHARE,
+                    title='Blog shared with you',
+                    message=f'{request.user.username} shared "{blog.title}" with you.',
+                    target_blog=blog,
+                    target_message=msg,
+                    payload={'blog_slug': blog.slug},
+                )
+                created += 1
         return Response({'sent': created})
 
 
